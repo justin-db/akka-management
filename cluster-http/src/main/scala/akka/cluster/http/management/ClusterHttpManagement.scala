@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 import akka.Done
 import akka.actor.AddressFromURIString
+import akka.cluster.ClusterSettings.DataCenter
 import akka.cluster.sharding.{ ClusterSharding, ShardRegion }
 import akka.cluster.{ Cluster, Member, MemberStatus }
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
@@ -32,6 +33,9 @@ final case class ClusterMembers(selfNode: String,
 final case class ClusterHttpManagementMessage(message: String)
 final case class ShardRegionInfo(shardId: String, numEntities: Int)
 final case class ShardDetails(regions: Seq[ShardRegionInfo])
+final case class DataCenters(selfDataCenter: DataCenter,
+                             allDataCenters: Set[DataCenter],
+                             unreachableDataCenters: Set[DataCenter])
 
 private[akka] sealed trait ClusterHttpManagementOperation
 private[akka] case object Down extends ClusterHttpManagementOperation
@@ -50,6 +54,7 @@ trait ClusterHttpManagementJsonProtocol extends SprayJsonSupport with DefaultJso
   implicit val clusterMemberMessageFormat = jsonFormat1(ClusterHttpManagementMessage)
   implicit val shardRegionInfoFormat = jsonFormat2(ShardRegionInfo)
   implicit val shardDetailsFormat = jsonFormat1(ShardDetails)
+  implicit val dataCentersFormat = jsonFormat3(DataCenters)
 }
 
 trait ClusterHttpManagementHelper extends ClusterHttpManagementJsonProtocol {
@@ -58,6 +63,17 @@ trait ClusterHttpManagementHelper extends ClusterHttpManagementJsonProtocol {
 }
 
 object ClusterHttpManagementRoutes extends ClusterHttpManagementHelper {
+
+  private def routeGetDataCenters(cluster: Cluster) =
+    get {
+      complete {
+        val unreachableDataCenters = cluster.readView.state.unreachableDataCenters
+        val allDataCenters = cluster.readView.state.allDataCenters
+        val selfDataCenter = cluster.selfDataCenter
+
+        DataCenters(selfDataCenter, allDataCenters, unreachableDataCenters)
+      }
+    }
 
   private def routeGetMembers(cluster: Cluster) =
     get {
@@ -180,6 +196,11 @@ object ClusterHttpManagementRoutes extends ClusterHttpManagementHelper {
       pathPrefix("shards" / Remaining) { shardRegionName =>
         pathEnd {
           routeGetShardInfo(cluster, shardRegionName)
+        }
+      } ~
+      pathPrefix("dc") {
+        pathEnd {
+          routeGetDataCenters(cluster)
         }
       }
     }
