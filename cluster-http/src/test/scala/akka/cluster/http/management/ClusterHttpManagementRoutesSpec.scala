@@ -21,6 +21,7 @@ import org.scalatest.{ Matchers, WordSpecLike }
 import scala.concurrent.duration._
 import scala.collection.immutable._
 import ClusterHttpManagementRoutesSpec._
+import akka.cluster.ClusterSettings.DataCenter
 import akka.cluster.InternalClusterAction.LeaderActionsTick
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.unmarshalling.Unmarshal
@@ -363,6 +364,34 @@ class ClusterHttpManagementRoutesSpec
         val bindingFuture = clusterHttpManagement.stop()
         Await.ready(bindingFuture, 5.seconds)
         system.terminate()
+      }
+    }
+
+    "return data-centers details" when {
+      "calling GET /dc" in {
+        val address1 = Address("akka", "Main", "hostname.com", 3311)
+        val address2 = Address("akka", "Main", "hostname2.com", 3311)
+
+        val clusterMember1 = new Member(UniqueAddress(address1, 1L), 1, Up, Set("dc-region-1"))
+        val clusterMember2 = new Member(UniqueAddress(address2, 2L), 2, Joining, Set("dc-region-2"))
+        val currentClusterState =
+          CurrentClusterState(SortedSet(clusterMember1, clusterMember2), leader = Some(address1))
+
+        val mockedCluster = mock(classOf[Cluster])
+        val mockedClusterReadView = mock(classOf[ClusterReadView])
+
+        when(mockedCluster.selfDataCenter).thenReturn("dc-region-1")
+        when(mockedCluster.readView).thenReturn(mockedClusterReadView)
+        when(mockedClusterReadView.state).thenReturn(currentClusterState)
+
+        Get("/dc") ~> ClusterHttpManagementRoutes(mockedCluster) ~> check {
+          val response = responseAs[DataCenters]
+
+          response.selfDataCenter shouldEqual "dc-region-1"
+          response.allDataCenters == Set("region-1, region-2")
+          response.unreachableDataCenters == Set.empty[DataCenter]
+          status == StatusCodes.OK
+        }
       }
     }
   }
